@@ -1,0 +1,69 @@
+# Linux build of TFC Fixes (metamod-p plugin) -> tfc_fixes_mm_mm_i386.so
+#
+#   make -f Makefile.linux                 (needs a 32-bit g++: on Debian/Ubuntu "apt install g++-multilib")
+#   make -f Makefile.linux SDK=/path/to/metamod-p    if the metamod-p source (the folder holding
+#                                  metamod/ and hlsdk/) is not found by itself
+#
+# By default it uses the parent folder when that holds metamod/ and hlsdk/ (the
+# layout in tfc/addons/metamod/metamod_sdk/), else ../../sdk/metamod-p.
+#
+# The .so needs no C++ runtime (built without exceptions/RTTI; linux_compat.cpp
+# supplies new/delete) and nothing newer than GLIBC_2.4 (linux_compat.h), so it
+# loads on old server distros as well as new ones. Only metamod's entry points
+# are exported (linux_exports.map).
+
+SDK      ?= $(if $(wildcard ../metamod/meta_api.h),..,../../sdk/metamod-p)
+CXX      ?= g++
+TARGET    = tfc_fixes_mm_mm_i386.so
+# Where metamod loads the plugin from: tfc/addons/tfc_fixes_mm/, three levels up
+# from this source folder (the Windows build copies its DLL to the same place).
+DEPLOY    = ../../../tfc_fixes_mm
+
+SRCS      = h_export.cpp meta_api.cpp sdk_util.cpp linux_compat.cpp \
+            tfx_config.cpp tfx_fixes.cpp tfx_game.cpp tfx_hooks.cpp \
+            tfx_takehealth.cpp tfx_trace.cpp
+OBJDIR    = obj_linux
+OBJS      = $(SRCS:%.cpp=$(OBJDIR)/%.o)
+
+INCLUDES  = -I$(SDK)/metamod -I$(SDK)/hlsdk/dlls -I$(SDK)/hlsdk/engine \
+            -I$(SDK)/hlsdk/common -I$(SDK)/hlsdk/pm_shared
+CXXFLAGS  = -m32 -march=i686 -mtune=generic -O2 -fPIC -fvisibility=hidden \
+            -fno-strict-aliasing -fno-math-errno -std=gnu++11 -Dlinux -D__linux__ \
+            -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+            -U_FORTIFY_SOURCE -fno-stack-protector -include linux_compat.h \
+            -ffunction-sections -fdata-sections \
+            -Wall -Wno-attributes -Wno-unused-parameter -Wno-write-strings \
+            -Wno-class-memaccess -Wno-stringop-truncation
+LDFLAGS   = -m32 -shared -nostdlib++ -static-libgcc -Wl,--no-undefined \
+            -Wl,--hash-style=both -Wl,--version-script=linux_exports.map -Wl,--gc-sections
+LIBS      = -Wl,--no-as-needed -l:libdl.so.2 -lm
+
+all: $(TARGET) deploy
+
+$(TARGET): $(OBJS) linux_exports.map
+	$(CXX) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
+	strip --strip-unneeded $@
+	@# Refuse a .so that needs a glibc newer than 2.4 - older servers can't load it.
+	@v=$$(objdump -T $@ | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1); \
+	if [ "$$(printf '%s\nGLIBC_2.4\n' "$$v" | sort -V | tail -1)" != "GLIBC_2.4" ]; then \
+		echo "ERROR: $@ needs $$v (newer than 2.4):"; objdump -T $@ | grep -E 'GLIBC_2\.([5-9]|[1-9][0-9])'; \
+		rm -f $@; exit 1; fi; echo "glibc check OK: needs at most $$v"
+
+$(OBJDIR)/%.o: %.cpp tfx.h tfx_offsets.h gamedll_vtable.h sdk_compat.h linux_compat.h
+	@mkdir -p $(OBJDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+clean:
+	rm -rf $(OBJDIR) $(TARGET)
+
+# Copy the freshly built .so to where metamod loads it, and tfc_fixes.ini beside
+# it the first time (an existing ini is yours and is left alone) - the same as
+# the Windows build's post-build step. Windows will not overwrite an open DLL;
+# on Linux a running server must be stopped (or the .so replaced) to pick it up.
+deploy: $(TARGET)
+	@mkdir -p $(DEPLOY)
+	cp -f $(TARGET) $(DEPLOY)/$(TARGET)
+	@[ -f $(DEPLOY)/tfc_fixes.ini ] || cp configs/tfc_fixes.ini $(DEPLOY)/tfc_fixes.ini
+	@echo "Deployed $(TARGET) -> $(DEPLOY)/ (metamod loads it from there)"
+
+.PHONY: all clean deploy

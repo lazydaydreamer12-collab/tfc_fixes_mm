@@ -1,2 +1,8 @@
-# Auto detect text files and perform LF normalization
 * text=auto
+*.sln       text eol=crlf
+*.vcxproj   text eol=crlf
+*.def       text eol=crlf
+*.bat       text eol=crlf
+Makefile.linux     text eol=lf
+linux_exports.map  text eol=lf
+*.sh        text eol=lf

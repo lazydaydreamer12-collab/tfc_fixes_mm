@@ -1,0 +1,9 @@
+/* Only metamod's entry points are exported from the .so. */
+{
+	global:
+		GiveFnptrsToDll;
+		Meta_Query;
+		Meta_Attach;
+		Meta_Detach;
+	local: *;
+};

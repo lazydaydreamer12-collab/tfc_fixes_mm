@@ -1,0 +1,30 @@
+# Visual Studio
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.ilk
+*.pdb
+*.exp
+*.lib
+*.obj
+*.tlog
+*.idb
+*.recipe
+
+# Linux build
+obj_linux/
+*.o
+
+# Built plugins (attach these to a GitHub Release instead)
+*.dll
+*.so
+
+# Written by the plugin at runtime
+fixes_trace.log
+fixes_trace.old.log
+
+# The test harness binary (tests/build.sh) and the game library it needs
+tests/t_fixes
+tests/tfc.so

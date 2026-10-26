@@ -1,0 +1,171 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="16.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <ProjectGuid>{8C1E5B7A-2D3F-4A9B-9E61-5F0C7D2A4B18}</ProjectGuid>
+    <RootNamespace>tfc_fixes_mm</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <!-- This plugin must be built as 32-bit (Win32) - GoldSrc/hlds is a
+         32-bit engine, there is no x64 target. -->
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <!-- Follow whichever toolset the installed Visual Studio provides.
+         Microsoft.Cpp.Default.props (imported above) sets
+         $(DefaultPlatformToolset) to that - v145 on this machine at the
+         time of writing. Pinning a literal version here is what broke the
+         build once already: a checked-in "v142" met a machine that had no
+         VS2019 build tools and MSBuild refused to start. The literal below
+         is only a fallback for the case where the property is somehow
+         empty. -->
+    <PlatformToolset Condition="'$(DefaultPlatformToolset)'!=''">$(DefaultPlatformToolset)</PlatformToolset>
+    <PlatformToolset Condition="'$(DefaultPlatformToolset)'==''">v145</PlatformToolset>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset Condition="'$(DefaultPlatformToolset)'!=''">$(DefaultPlatformToolset)</PlatformToolset>
+    <PlatformToolset Condition="'$(DefaultPlatformToolset)'==''">v145</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+
+  <PropertyGroup Label="UserMacros" />
+
+  <!-- Output named to match the _mm.dll convention this server's
+       plugins.ini already uses for other plugins (foxbot, amxmodx). -->
+  <PropertyGroup>
+    <TargetName>tfc_fixes_mm</TargetName>
+    <OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- /MT: static CRT, so the plugin doesn't need a matching vcredist
+           installed on the server. Matches convention for GoldSrc/hlds
+           plugin builds. -->
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <AdditionalIncludeDirectories>.;..\hlsdk\common;..\hlsdk\dlls;..\hlsdk\engine;..\hlsdk\pm_shared;..\metamod;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <!-- Put only the .pdb's file name in the DLL, not the full path it was
+           built in (that path is readable by anyone who downloads the DLL). -->
+      <AdditionalOptions>/PDBALTPATH:%_PDB% %(AdditionalOptions)</AdditionalOptions>
+      <!-- Forces GiveFnptrsToDll to export undecorated - see
+           tfc_fixes_mm.def for why this is required. -->
+      <ModuleDefinitionFile>tfc_fixes_mm.def</ModuleDefinitionFile>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <AdditionalIncludeDirectories>.;..\hlsdk\common;..\hlsdk\dlls;..\hlsdk\engine;..\hlsdk\pm_shared;..\metamod;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <!-- Put only the .pdb's file name in the DLL, not the full path it was
+           built in (that path is readable by anyone who downloads the DLL). -->
+      <AdditionalOptions>/PDBALTPATH:%_PDB% %(AdditionalOptions)</AdditionalOptions>
+      <!-- Forces GiveFnptrsToDll to export undecorated - see
+           tfc_fixes_mm.def for why this is required. -->
+      <ModuleDefinitionFile>tfc_fixes_mm.def</ModuleDefinitionFile>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemGroup>
+    <ClCompile Include="h_export.cpp" />
+    <ClCompile Include="meta_api.cpp" />
+    <ClCompile Include="sdk_util.cpp" />
+    <ClCompile Include="tfx_config.cpp" />
+    <ClCompile Include="tfx_fixes.cpp" />
+    <ClCompile Include="tfx_game.cpp" />
+    <ClCompile Include="tfx_hooks.cpp" />
+    <ClCompile Include="tfx_takehealth.cpp" />
+    <ClCompile Include="tfx_trace.cpp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="tfc_fixes_mm.def" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="sdk_compat.h" />
+    <ClInclude Include="gamedll_vtable.h" />
+    <ClInclude Include="tfx.h" />
+    <ClInclude Include="tfx_offsets.h" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+
+  <!-- Copy the freshly linked DLL to where metamod loads it from, and put
+       tfc_fixes.ini beside it the first time (an existing one is yours and is
+       left alone). Without this the build succeeds and the game keeps
+       running the previous DLL.
+
+       Windows will not overwrite a DLL that is open: if the server is running
+       when you build, the copy fails, and the build says so rather than
+       leaving a stale DLL in place. Shut the server down and build again. -->
+  <Target Name="DeployToAddons" AfterTargets="Build">
+    <PropertyGroup>
+      <TfxDeployDir>$(SolutionDir)..\..\..\tfc_fixes_mm\</TfxDeployDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(TfxDeployDir)" />
+    <Message Importance="high" Text="Deploying $(TargetFileName) -&gt; $(TfxDeployDir)tfc_fixes_mm_mm.dll" />
+    <Copy SourceFiles="$(TargetPath)"
+          DestinationFiles="$(TfxDeployDir)tfc_fixes_mm_mm.dll"
+          Retries="3" RetryDelayMilliseconds="700" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb"
+          DestinationFiles="$(TfxDeployDir)tfc_fixes_mm_mm.pdb"
+          Retries="3" RetryDelayMilliseconds="700"
+          ContinueOnError="true" />
+    <Copy SourceFiles="$(ProjectDir)configs\tfc_fixes.ini"
+          DestinationFiles="$(TfxDeployDir)tfc_fixes.ini"
+          Condition="!Exists('$(TfxDeployDir)tfc_fixes.ini')"
+          ContinueOnError="true" />
+    <Message Importance="high" Text="Deployed OK - the running game will pick this up on its next load." />
+  </Target>
+</Project>
