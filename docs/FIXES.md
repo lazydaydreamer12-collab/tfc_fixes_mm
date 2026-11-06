@@ -46,7 +46,7 @@ then compares `e`'s `m_pfnThink` against it — exact identification, no guessin
 from classnames. If any method is missing, the fixes that need it stay off and
 `tfx` reports "think functions found: NOT ALL".
 
-### Patching a virtual with no engine hook — `tfx_takehealth.cpp` / `gamedll_vtable.h`
+### Patching a virtual with no engine hook — `tfx_takehealth.cpp` / `tfx_conc.cpp` / `gamedll_vtable.h`
 
 Fix #7 needs the player's `TakeHealth`, a C++ virtual with no engine-level hook.
 `TFX_HookTakeHealth()` patches that one slot in `CBasePlayer`'s vtable (one patch
@@ -54,13 +54,16 @@ covers every player), chaining to the original, and `TFX_UnhookTakeHealth()`
 restores it on unload — but only if nothing else has patched over it since.
 `gamedll_vtable.h` has the read/patch/restore helpers; on Windows the slot gets a
 member-function thunk because MSVC will not make a free function `__thiscall`.
+`conc_edge` uses the very same mechanism on a second slot — the player's
+`TeamFortress_TakeConcussionBlast` (`tfx_conc.cpp`, `TFX_HookConc` / `TFX_UnhookConc`),
+slot 63 on `tfc.so` and slot 62 on `tfc.dll` (§3).
 
 ### Config, logging, offsets
 
 * `tfx_config.cpp` — reads `tfc_fixes.ini` at every map start, owns the per-fix
   on/off flags, the per-map and total hit counters, and the `tfx` / `tfx_reload`
   server commands (including the live `tfx push_scale|push_fan_scale|push_max <v>`
-  setters).
+  and `tfx conc_rescue_min <v>` setters).
 * `tfx_trace.cpp` — `fixes_trace.log` beside the DLL; rolls over past 1 MB.
 * `tfx_offsets.h` — the byte offsets of the game's private fields (`tfstate`,
   grenade counts, leg damage, teleporter state, the think pointer, …), one set for
@@ -79,6 +82,7 @@ member-function thunk because MSVC will not make a free function `__thiscall`.
 | `tfx_hooks.cpp` | The metamod pre/post hooks; each forwards to `tfx_fixes.cpp` and returns the right `MRES_*`. |
 | `tfx_game.cpp` | Resolving the game's think methods by symbol; `TFX_IsThinking`. |
 | `tfx_takehealth.cpp` | The player `TakeHealth` vtable hook (fix #7). |
+| `tfx_conc.cpp` | The player `TakeConcussionBlast` vtable hook (`conc_edge`). |
 | `tfx_config.cpp` | `tfc_fixes.ini`, the `tfx`/`tfx_reload` commands, the counters. |
 | `tfx_trace.cpp` | `fixes_trace.log`. |
 | `tfx_offsets.h` | Field offsets, Windows and Linux. |
@@ -201,13 +205,29 @@ health is between 0 and 1 and the player is not dead. The server's value is unto
 
 ### #17 `grenade_jump_fps` — hand-grenade jumps go straight up at high fps
 An explosion pushes a player away from the grenade's centre
-(`origin − (absmin+absmax)/2`). For a grenade that goes off *in hand* (at the
-player's origin) the vector is zero unless the player moved since the last frame — at
-100 fps they have, at 1000 fps they usually have not, so the push is straight up.
+(`origin − (absmin+absmax)/2`). For a grenade that goes off *in hand* — at the
+player's own origin — that centre is the player, so the push is just however far the
+origin moved between the frame the grenade was placed and the frame it detonates, one
+server frame later.
+
+**The root cause is the command rate, not the frame rate.** A player's origin only
+advances when the server runs one of their movement commands (usercmds), which arrive
+at the client's `cl_cmdrate` (capped by `sv_maxupdaterate`), *not* once per server
+frame. At `sys_ticrate 100` a frame is ~10 ms — about one command apart — so a command
+almost always lands between place and detonate and the push points the way they were
+running. At `sys_ticrate 1000` a frame is ~1 ms but commands are still ~10 ms apart, so
+the detonate frame usually carries no new command: the origin has not moved, the vector
+is zero, and TFC's degenerate-direction default sends you straight up. (Raising the
+command/packet rate so a command lands almost every ms makes the jump work on its own —
+matching live high-cmdrate testing — which is why it looks like an fps bug but is really
+a cmdrate one.)
+
 **Fix:** `TFX_ThinkPre` (on the detonate think) shifts the in-hand grenade's *bounding
-box only* — not its origin — to where the player was one 100-fps frame ago, so the
-push points along their movement. `TFX_ThinkPost` puts the box back. The server tick
-rate is never touched.
+box only* — not its origin — to where the player would have been one 100-fps frame along
+their current velocity, so the push points along their movement regardless of command
+rate. `TFX_ThinkPost` puts the box back. It engages only while the grenade is still
+exactly at the owner's origin (the broken no-movement case), and the server tick rate is
+never touched.
 
 ### #18 `flag_toss` — "Not enough room to drop items here"
 `DropGoalItems` traces a player-sized box 32 units ahead of your eyes and refuses the
@@ -220,6 +240,46 @@ A text menu open at a map change never gets its "close"; the client keeps it up 
 the next map, eating number keys. **Fix:** `TFX_MessageBegin` spots the message of
 the day (the first thing every client is sent), and `TFX_MessageEndPost` follows it
 with a blank `ShowMenu` (no keys, no text) once per connection, which closes it.
+
+### — `conc_edge` — edge concs that get re-grounded (new; not in the AMX plugin)
+`CBasePlayer::TeamFortress_TakeConcussionBlast` sets the player's velocity to a push
+away from the grenade, with the upward part multiplied by 1.5 (confirmed from
+`tfc.so`: it writes `pev->velocity` directly and never touches `pev->flags`). But the
+engine's movement code, not the game DLL, decides on the next player frame whether
+that push actually lifts anyone: `PM_CatagorizePosition` keeps you airborne only when
+`velocity[2] > 180`; at or below that it traces 2 units down, finds the floor you were
+standing on, and drops you straight back onto it (then `PM_WalkMove` zeroes
+`velocity[2]`). So a conc that kicks a grounded player up by 150–180 u/s — plenty to
+feel like it should pop you — is erased before you move an inch, and whether a given
+conc clears 180 depends on your exact distance and angle to the grenade. That is why
+close concs feel inconsistent: some launch you, some do nothing.
+
+**Fix:** a vtable hook on `TakeConcussionBlast` (same mechanism as #7, §1) runs after
+the game applies its knockback. If a player who is still on the ground
+(`FL_ONGROUND`) came out with an upward velocity in `conc_rescue_min`..180, it nudges
+`velocity.z` just over the cutoff (181) and clears `FL_ONGROUND`, so the engine can no
+longer trace them back down onto the floor. The horizontal push is left exactly as the
+game set it. A conc already over 180, one below `conc_rescue_min`, and a player who was
+already airborne are all left untouched. Clearing `FL_ONGROUND` alone is **not**
+enough — `CatagorizePosition` re-grounds from the down-trace whenever `velocity[2]` is
+180 or less, which is the whole reason the velocity has to be nudged over the cutoff.
+
+It changes a movement feel players have lived with for years, so it ships **off by
+default** (`conc_edge 0`); `conc_rescue_min` (default 150, clamped 1–180) is the low
+edge of the rescued band. The hooked method is `TeamFortress_TakeConcussionBlast`,
+**vtable slot 63 on `tfc.so` and slot 62 on `tfc.dll`** — one lower on Windows because
+GCC emits two `CBasePlayer` destructor slots where MSVC emits one, the same shift that
+makes `TakeHealth` slot 14 on Linux and 13 on Windows. The Windows slot was confirmed
+from `tfc.dll`, not assumed: the blast function is the only user of the formula's `0.03`
+double constant, its address sits at the vtable entry base+62 (the base being the slot
+right after the RTTI complete-object-locator pointer, which also places `TakeHealth` at
+slot 13), and the function calls `Concuss` through vtable slot 63 — one above itself,
+mirroring `tfc.so`'s slot-64 `Concuss`. The `conc_edge` test scenario offsets the player
+horizontally so the conc's vertical component lands in the dead band, then checks the
+rescue, both no-ops (strong and weak concs), the airborne guard, and the live
+`conc_rescue_min` knob; it runs against `tfc.so`, so the Linux path is the one exercised
+in the harness, while the Windows build is verified to compile and link and shares all
+of that logic bar the slot number.
 
 ---
 

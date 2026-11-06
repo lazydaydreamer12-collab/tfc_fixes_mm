@@ -1,0 +1,8 @@
+# regenerate everything with ./run.sh
+so.dis
+dll.dis
+so_funcs.json
+dll_funcs.json
+matched.json
+crossmap.json
+__pycache__/

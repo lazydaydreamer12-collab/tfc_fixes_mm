@@ -21,7 +21,7 @@ DEPLOY    = ../../../tfc_fixes_mm
 
 SRCS      = h_export.cpp meta_api.cpp sdk_util.cpp linux_compat.cpp \
             tfx_config.cpp tfx_fixes.cpp tfx_game.cpp tfx_hooks.cpp \
-            tfx_takehealth.cpp tfx_trace.cpp
+            tfx_takehealth.cpp tfx_conc.cpp tfx_trace.cpp
 OBJDIR    = obj_linux
 OBJS      = $(SRCS:%.cpp=$(OBJDIR)/%.o)
 

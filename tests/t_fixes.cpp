@@ -603,18 +603,146 @@ static void S_PushFps(bool on)
 	}
 }
 
-struct Scenario { const char *name; void (*fn)(bool); };
+// conc_edge: a conc that lifts a grounded player only into the 150..180 u/s
+// dead band is re-grounded by the engine's 2-unit down-trace and does nothing
+// (PM_CatagorizePosition keeps you airborne only above 180). The fix nudges
+// such a conc just over 180; a strong conc (>180) and a weak one (below
+// conc_rescue_min) are left exactly as the game set them, and an already
+// airborne player is never touched. The source is ED[0] at the origin; the
+// player sits directly above it, so the push is purely vertical and its size
+// varies with the distance.
+static float ConcBlast(edict_t *al, float dz, bool onGround)
+{
+	// A real conc hits you from the side, not from straight under your feet: the
+	// game ignores a blast closer than ~16 units (so a purely vertical offset is
+	// either nothing or a huge launch, never the dead band). Offsetting 48 units
+	// horizontally keeps the total distance well above that cutoff while the
+	// vertical kick (vz) scales smoothly with the small vertical offset dz, which
+	// is what lets a conc land in the 150..180 band in the first place.
+	al->v.origin   = Vector(48, 0, dz);
+	al->v.velocity = Vector(0, 0, 0);
+	if (onGround) al->v.flags |= FL_ONGROUND; else al->v.flags &= ~FL_ONGROUND;
+	ED[0].v.origin = Vector(0, 0, 0);
+	typedef void (*ConcBlastFn)(void *, entvars_t *, float);
+	((ConcBlastFn)(*(void ***)al->pvPrivateData)[63])(al->pvPrivateData, &ED[0].v, 320.0f);
+	return al->v.velocity.z;
+}
+
+static void S_ConcEdge(bool on)
+{
+	edict_t *al = Player(1, "Alice", "1", "soldier");
+
+	// Sweep the distance to find a conc that naturally lands in the dead band
+	// (150..<180), one that lands below it (weak), and one well above (strong).
+	// Measured with the fix off so the hook passes straight through.
+	if (on) SimServerCommand("tfx", "conc_edge", "0");
+	float dzBand = -1, vzBand = 0, dzWeak = -1, dzStrong = -1;
+	for (float dz = 2.0f; dz <= 60.0f; dz += 0.5f)
+	{
+		float vz = ConcBlast(al, dz, true);
+		if (dzWeak   < 0 && vz > 40.0f  && vz < 120.0f) dzWeak = dz;
+		if (dzBand   < 0 && vz > 150.0f && vz < 179.0f) { dzBand = dz; vzBand = vz; }
+		if (dzStrong < 0 && vz > 230.0f) dzStrong = dz;
+	}
+	printf("  natural concs: band dz=%.1f (vz=%.1f), weak dz=%.1f, strong dz=%.1f\n",
+		dzBand, vzBand, dzWeak, dzStrong);
+	Check(dzBand > 0, "a conc exists that naturally lands in the 150..180 dead band (<=180: the engine re-grounds it)");
+
+	if (!on)
+	{
+		// Control: without the fix the band conc leaves vz at/under 180 with
+		// FL_ONGROUND still set, so the engine's next-frame down-trace swallows
+		// it and the conc does nothing.
+		float vz = ConcBlast(al, dzBand > 0 ? dzBand : 12.0f, true);
+		printf("  (control) band conc vz=%.1f, FL_ONGROUND=%d\n", vz, (al->v.flags & FL_ONGROUND) ? 1 : 0);
+		Check(vz <= 180.0f && (al->v.flags & FL_ONGROUND),
+			"(control) a dead-band conc stays <=180 with FL_ONGROUND set - the engine re-grounds it");
+		return;
+	}
+
+	SimServerCommand("tfx", "conc_edge", "1");
+
+	// 1) The band conc is nudged just over 180 and taken off the ground.
+	float vz = ConcBlast(al, dzBand, true);
+	printf("  band conc with fix: vz=%.1f, FL_ONGROUND=%d\n", vz, (al->v.flags & FL_ONGROUND) ? 1 : 0);
+	Check(fabsf(vz - 181.0f) < 0.01f && !(al->v.flags & FL_ONGROUND),
+		"conc_edge: a 150..180 conc is nudged to 181 u/s and FL_ONGROUND cleared (it launches)");
+
+	// 2) A strong conc (already over 180) is left exactly as the game set it.
+	if (dzStrong > 0)
+	{
+		SimServerCommand("tfx", "conc_edge", "0");
+		float strongNatural = ConcBlast(al, dzStrong, true);
+		SimServerCommand("tfx", "conc_edge", "1");
+		vz = ConcBlast(al, dzStrong, true);
+		printf("  strong conc: natural=%.1f, with fix=%.1f\n", strongNatural, vz);
+		Check(fabsf(vz - strongNatural) < 0.01f && vz > 180.0f,
+			"conc_edge: a conc that already clears 180 is left untouched");
+	}
+
+	// 3) A weak conc (below conc_rescue_min) is left on the ground - faithful to stock.
+	if (dzWeak > 0)
+	{
+		vz = ConcBlast(al, dzWeak, true);
+		printf("  weak conc: vz=%.1f, FL_ONGROUND=%d\n", vz, (al->v.flags & FL_ONGROUND) ? 1 : 0);
+		Check(vz < 150.0f && (al->v.flags & FL_ONGROUND),
+			"conc_edge: a conc below conc_rescue_min is left as-is (still grounded)");
+	}
+
+	// 4) A player already in the air is never touched, even in the band.
+	vz = ConcBlast(al, dzBand, false);
+	printf("  airborne band conc: vz=%.1f (should be the natural <=180, not 181)\n", vz);
+	Check(vz <= 180.0f && fabsf(vz - 181.0f) > 0.01f,
+		"conc_edge: an airborne player's conc is left alone (nothing to re-ground)");
+
+	// 5) The live knob: raising conc_rescue_min above the band stops the rescue.
+	SimServerCommand("tfx", "conc_rescue_min", "179");
+	vz = ConcBlast(al, dzBand, true);
+	printf("  after 'tfx conc_rescue_min 179': band conc vz=%.1f (no rescue)\n", vz);
+	Check(vz <= 180.0f && fabsf(vz - 181.0f) > 0.01f,
+		"conc_edge: 'tfx conc_rescue_min <v>' live-tunes the rescue band");
+	SimServerCommand("tfx", "conc_rescue_min", "150");
+}
+
+// name, fn, and the tfc_fixes.ini key the scenario covers (NULL = a regression
+// guard for one of TFC's own built-in fixes, not a plugin fix). ci.sh checks
+// that every key in g_tfxFixInfo is covered by at least one scenario here.
+struct Scenario { const char *name; void (*fn)(bool); const char *fix; };
 static Scenario S[] = {
-	{ "tele_death_entrance", S_TeleDeathEntrance }, { "tele_death_exit", S_TeleDeathExit }, { "tele_flag", S_TeleFlag },
-	{ "tele_leaver", S_TeleLeaver }, { "grenade_spawn", S_GrenadeSpawn }, { "grenade_jump", S_GrenadeJump },
-	{ "door_caltrops", S_DoorCaltrops }, { "zero_health", S_ZeroHealth }, { "nails", S_Nails },
-	{ "nailgren_ceiling", S_NailGrenCeiling }, { "mirv", S_Mirv }, { "grenade_in_entity", S_GrenadeInEntity },
-	{ "camera", S_Camera }, { "conc_respawn", S_ConcRespawn }, { "menus", S_Menus }, { "flag_toss", S_FlagToss }, { "flag_in_wall", S_FlagInWall },
-	{ "drop_grenade", S_DropGrenade }, { "cap_grenade", S_CapGrenade }, { "push_fps", S_PushFps },
+	{ "tele_death_entrance", S_TeleDeathEntrance, "teleport_death" },
+	{ "tele_death_exit",     S_TeleDeathExit,     "teleport_death" },
+	{ "tele_flag",           S_TeleFlag,          "teleport_flag" },
+	{ "tele_leaver",         S_TeleLeaver,        "teleport_leaver" },
+	{ "grenade_spawn",       S_GrenadeSpawn,      "grenade_spawn" },
+	{ "grenade_jump",        S_GrenadeJump,       "grenade_jump_fps" },
+	{ "door_caltrops",       S_DoorCaltrops,      "door_caltrops" },
+	{ "zero_health",         S_ZeroHealth,        "zero_health" },
+	{ "nails",               S_Nails,             "ghost_nails" },
+	{ "nailgren_ceiling",    S_NailGrenCeiling,   "nailgren_ceiling" },
+	{ "mirv",                S_Mirv,              "mirv_walls" },
+	{ "grenade_in_entity",   S_GrenadeInEntity,   "grenade_in_entity" },
+	{ "camera",              S_Camera,            NULL },   // TFC's own #5
+	{ "conc_respawn",        S_ConcRespawn,       NULL },   // TFC's own #6
+	{ "menus",               S_Menus,             "stuck_menus" },
+	{ "flag_toss",           S_FlagToss,          "flag_toss" },
+	{ "flag_in_wall",        S_FlagInWall,        "flag_in_wall" },
+	{ "drop_grenade",        S_DropGrenade,       "dropitems_grenade" },
+	{ "cap_grenade",         S_CapGrenade,        "dropitems_grenade" },
+	{ "push_fps",            S_PushFps,           "push_fps" },
+	{ "conc_edge",           S_ConcEdge,          "conc_edge" },
 };
 
 int main(int argc, char **argv)
 {
+	if (argc >= 2 && !strcmp(argv[1], "--coverage"))
+	{
+		for (auto &s : S)
+		{
+			if (s.fix) printf("fix=%s scenario=%s\n", s.fix, s.name);
+			else       printf("regression scenario=%s\n", s.name);
+		}
+		return 0;
+	}
 	if (argc < 3) { for (auto &s : S) printf("%s\n", s.name); return 0; }
 	bool on = !strcmp(argv[2], "on");
 	g_quiet = getenv("FX_VERBOSE") ? 0 : 2;

@@ -187,6 +187,7 @@ void TFX_FixesFrame(void)
 				TFX_Field<int>(e->pvPrivateData, OFS_TFSTATE) &= ~TFSTATE_GRENTHROWING;
 		}
 		TFX_HookTakeHealth(e);   // loaded mid-map: no connect to do it at (does nothing once done)
+		TFX_HookConc(e);         // same - patch the shared player vtable once
 		bool alive = TFX_InGame(e);
 		if (s_pl[i].wasAlive && !alive)
 		{
@@ -214,6 +215,7 @@ void TFX_ClientPutInServer(edict_t *e)
 	s_pl[i].menuCleared = false;
 	s_pushCooldown[i] = 0.0f;
 	TFX_HookTakeHealth(e);
+	TFX_HookConc(e);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,15 +357,32 @@ static void TFX_TeleThink(edict_t *te)
 // A grenade held too long goes off in the hand: ExplodeInHand puts it at the
 // player's origin, and it detonates on the next server frame. The push a
 // player gets from an explosion points from the centre of the grenade to the
-// player (CBasePlayer::TakeDamage: origin - (absmin+absmax)/2). At 100 fps the
-// player has moved by the next frame, so the push points the way they were
-// running. At 1000 fps there is usually no movement command between the two
-// frames, the vector is zero, and TFC pushes straight up.
+// player (CBasePlayer::TakeDamage: origin - (absmin+absmax)/2). For an in-hand
+// grenade that centre IS the player's own origin, so the push is just however
+// far the origin moved between the frame the grenade was placed and the frame
+// it detonates, one server frame later.
 //
-// Fix: when an in-hand grenade (still exactly at its owner's origin) is about
-// to detonate, move its bounding box - only the box, which is what the push is
-// measured from - to where the player was one 100 fps frame ago. The origin
-// stays put, so everything else about the explosion is TFC's own.
+// The root cause is the command rate, not the frame rate. A player's origin
+// only advances when the server runs one of their movement commands (usercmds),
+// and those arrive at the client's cl_cmdrate (capped by sv_maxupdaterate), not
+// once per server frame. At sys_ticrate 100 a frame is ~10 ms, about one command
+// apart, so a command almost always lands between place and detonate and the
+// push points the way they were running. At sys_ticrate 1000 a frame is ~1 ms
+// but commands are still ~10 ms apart, so the detonate frame usually carries no
+// new command: the origin has not moved, the vector is zero, and TFC's
+// degenerate-direction default pushes straight up. (Raising the command/packet
+// rate so a command lands almost every ms makes the jump work unaided - what
+// live high-cmdrate testing showed - so it looks like an fps bug but is a
+// cmdrate one; this fix removes the dependence on it.)
+//
+// Fix: when an in-hand grenade (still exactly at its owner's origin - so only
+// the broken no-movement-this-frame case) is about to detonate, move its
+// bounding box - only the box, which is what the push is measured from - to
+// where the player would have been one 100 fps frame along their current
+// velocity. The origin stays put, so everything else about the explosion is
+// TFC's own. The shift uses the full velocity (what a 100 fps frame would
+// actually have moved), so a rising or falling jumper is reproduced faithfully,
+// not only a flat run.
 static void TFX_GrenadeJumpPre(edict_t *g)
 {
 	edict_t *owner = g->v.owner;

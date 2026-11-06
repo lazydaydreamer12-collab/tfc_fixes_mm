@@ -10,10 +10,23 @@
 	// medikit calls it through vtable+0x34 with 200.0 (slot 13); tfc.so through
 	// slot 14 - GCC puts two destructors where MSVC has one.
 	#define TFX_VT_TAKEHEALTH_SLOT     13
+	// CBasePlayer::TeamFortress_TakeConcussionBlast(entvars_s *, float) - the
+	// knockback the conc grenade gives the player. tfc.so puts it at slot 63
+	// (read with scratchpad/vtslot.py); tfc.dll is slot 62, one lower because
+	// GCC emits two CBasePlayer destructor slots where MSVC emits one, the same
+	// shift that makes TakeHealth slot 14 on Linux and 13 here. Confirmed from
+	// tfc.dll, not assumed: the function (at 0x10046c90) is the only user of the
+	// blast's 0.03 `double` constant, and its address sits at the vtable slot
+	// (0x1009d224) that is base+62 (base 0x1009d12c, right after the RTTI
+	// complete-object-locator pointer; the same base puts TakeHealth at slot 13
+	// / offset 0x34, as fix #7 already uses). The function itself calls Concuss
+	// through vtable+0xfc (slot 63), matching tfc.so's slot-64 Concuss one lower.
+	#define TFX_VT_CONCBLAST_SLOT      62
 	#define WC_THISCALL __thiscall
 	#include <windows.h>
 #else
 	#define TFX_VT_TAKEHEALTH_SLOT     14
+	#define TFX_VT_CONCBLAST_SLOT      63
 	#define WC_THISCALL
 	#include <sys/mman.h>
 	#include <unistd.h>

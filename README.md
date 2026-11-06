@@ -38,11 +38,12 @@ stopped to replace the `.so`.
 | `tfx` | Every fix, on or off, and how many times it stepped in this map and since load |
 | `tfx <fix> 0` / `tfx <fix> 1` | Switch one fix off or on until the next map |
 | `tfx push_scale <v>` / `tfx push_fan_scale <v>` / `tfx push_max <v>` | Tune jump-pad launch / fan lift / the u/s cap live (until the next map or `tfx_reload`) |
+| `tfx conc_rescue_min <v>` | Set the smallest upward conc (u/s) `conc_edge` will rescue, live (until the next map or `tfx_reload`) |
 | `tfx_reload` | Read `tfc_fixes.ini` again |
 
 `addons\tfc_fixes_mm\tfc_fixes.ini` has one line per fix (`1` on, `0` off), plus
-`log_each` and the `push_fps` knobs `push_scale` / `push_fan_scale` / `push_max`. It is read
-at every map start. `fixes_trace.log` in the same folder records the first few
+`log_each`, the `push_fps` knobs `push_scale` / `push_fan_scale` / `push_max`, and
+`conc_edge`'s `conc_rescue_min`. It is read at every map start. `fixes_trace.log` in the same folder records the first few
 times each fix stepped in, every map.
 
 ## The fixes
@@ -65,10 +66,11 @@ mechanism that corrects it, plus a tour of the source, see
 | 14 | `grenade_spawn` | A primed grenade first checks on its owner 0.8 s after the pin is pulled. Die and respawn inside that window and it is still "in hand" and goes off at your new spawn. Caltrops never check at all | At death, a grenade still in hand is let go there and then, and drops at the body |
 | 15 | `dropitems_grenade` | Losing a flag - dropping it, **capturing it**, or a goal taking it away - deletes the grenade you are priming if *either* grenade count is 0, even if the flag gave you no grenades | Only removes it when the flag took away grenades of the type you are priming (TFC's own rule when an item is handed over) |
 | 16 | `zero_health` | Health is sent to the client rounded down, and 0 means dead: on 0.5 health you see the death view while still alive and moving | The client is told 1 while health is above 0 and below 1. The server's real value is untouched |
-| 17 | `grenade_jump_fps` | A grenade going off in your hand pushes you away from where it was. At 100 fps you have moved since then, so you go forwards. At 1000 fps (`sys_ticrate 1000`) you usually have not, and you go straight up | The push is measured from where you would have been one 100-fps frame earlier, so it points the way you are moving. Nothing else about the blast changes, and the server tick rate is never touched |
+| 17 | `grenade_jump_fps` | A grenade going off in your hand pushes you away from where it was — i.e. however far you moved in the one frame before it detonates. That move only happens on a frame that runs one of your movement commands (your `cl_cmdrate`), not every server frame: at `sys_ticrate 100` one usually does, so you go forwards; at `sys_ticrate 1000` one usually does not, so you go straight up. It reads like an fps bug but is really a command-rate one | The push is measured from where you would have been one 100-fps frame along your velocity, so it points the way you are moving at any command/tick rate. Nothing else about the blast changes, and the server tick rate is never touched |
 | 18 | `flag_toss` | "Not enough room to drop items here": dropping checks a player-sized box from your eyes 32 units forward, so a teammate or a doorframe in front of you stops it | The check is skipped (only inside `dropitems`); #2 still keeps the item out of the wall |
 | 19 | `stuck_menus` | A menu open at a map change stays on the next map, eating number keys | A blank menu goes out with each player's message of the day, once per connection |
 | — | `push_fps` | A `trigger_push` *field* (no "Push Once" flag) adds `speed` to your velocity **every frame** you are sampled inside the brush (`tfc.so` sets `basevelocity = speed·movedir / frametime`, which the engine's `× frametime` cancels). So the launch is the sum over however many frames catch you inside — and that grows with the frame rate: a thin pad is ~2 frames at 100 fps but ~20 at 1000 fps, several times higher | On entry the player is pushed **once** — `velocity += speed·movedir`, exactly what a "Push Once" pad does — and the per-frame push is superseded while they stay on it. The launch is the pad's own `speed`, the same at any fps/tick. Only vertical-dominant pads are handled; conveyor/wind fields are left to the engine — see the caveat below |
+| — | `conc_edge` | A concussion grenade sets your velocity, but the engine only keeps you airborne when the upward part clears **180 u/s**; at or below that it traces 2 units down, finds the floor you are standing on and drops you straight back onto it, so a close-but-not-square conc can shove you 150–180 u/s up and still launch you nowhere. Whether a given conc clears 180 depends on your exact distance and angle to the grenade, so edge concs feel inconsistent — some pop you, some do nothing | For a grounded player whose upward kick lands in that dead band, the kick is nudged just over 180 and `FL_ONGROUND` cleared, so the conc launches; the sideways push is left exactly as the game set it. **Off by default** (it changes a long-standing movement feel). `conc_rescue_min` (default 150) is the low edge of the band — see the caveat below |
 
 ### Already fixed by Valve
 
@@ -104,6 +106,9 @@ the AMX plugin had already dropped most of their code:
 - **New: players leaving mid-teleport.**
 - **New: push pads that launch the same at any fps/tick** (`push_fps`), rather
   than a height that moves with the server rate and the player's own fps.
+- **New: edge concs that only just lift you still launch** (`conc_edge`, off by
+  default), rather than being silently re-grounded by the engine when the kick
+  lands under its 180 u/s cutoff.
 - **Knows what an entity is about to do.** TFC exports its think functions by
   name, and the plugin compares against them instead of guessing from
   appearances.
@@ -138,11 +143,31 @@ is to build launch pads with the **Push Once** spawnflag, which is already
 rate-independent and which this fix leaves untouched. Conveyor/wind fields
 (mostly horizontal) are left to the engine.
 
+### `conc_edge`: off by default
+
+Like `push_fps`, this one changes player movement, which clients predict
+locally: a client running the stock knockback predicts a slightly different path
+for a moment and then snaps to the server's nudged value when it arrives — one
+small corrective hitch, not continuous rubber-banding. It only ever *raises* a
+conc that was going to do nothing: a grounded player whose upward velocity lands
+in `conc_rescue_min`..180 is nudged just over the engine's 180 u/s cutoff (to
+181) and taken off the ground. A conc that already launches you (over 180), a
+gentle one (below `conc_rescue_min`), and a player already in the air are all
+left exactly as TFC set them. Raise `conc_rescue_min` toward 180 to rescue only
+near-misses, or lower it to rescue weaker concs.
+
+It ships **off** because it changes a movement feel players have lived with for
+years; turn it on with `tfx conc_edge 1` or in the ini. The hooked method's
+vtable slot was read from both shipped builds — `tfc.so` slot 63, `tfc.dll` slot
+62 — so the fix works on Linux and Windows alike. Its automated test (below) runs
+against `tfc.so`, so the Linux path is the one exercised in the harness; the
+Windows path shares all of its logic and differs only in that one slot number.
+
 ## Working with the other plugins
 
-- **Weapon Changer Plus and TFC Monsters:** fine together. Only the player's
-  `TakeHealth` vtable slot is patched (#7). WC+ and Monsters patch
-  `TakeDamage`, a different slot.
+- **Weapon Changer Plus and TFC Monsters:** fine together. The only player
+  vtable slots patched are `TakeHealth` (#7) and `TakeConcussionBlast`
+  (`conc_edge`). WC+ and Monsters patch `TakeDamage`, a different slot again.
 - **Unloading:** `meta unload` puts the slot back, as long as nothing has
   patched over it since.
 - **Grenade names:** the grenade fixes look at TFC's own grenade entities,
@@ -166,9 +191,28 @@ To run it:
 cd tests && ./build.sh && TFC_SO=/path/to/tfc.so ./run.sh
 ```
 
-It needs 32-bit g++, and runs on Linux only. The Windows offsets in
-`tfx_offsets.h` were read from `tfc.dll`'s machine code, where the game itself
-uses each field.
+It needs 32-bit g++, and runs on Linux only.
+
+For a release gate, one command builds the plugin and the harness, checks that
+**every** fix in `g_tfxFixInfo` has at least one scenario, and runs every
+scenario both ways, printing one line per scenario and a pass/fail exit code:
+
+```
+cd tests && ./ci.sh
+```
+
+Adding a fix without a test now fails the gate (`t_fixes --coverage` lists the
+scenario → fix mapping it checks against).
+
+### Reading the game DLLs
+
+The Windows offsets and vtable slots in `tfx_offsets.h` / `gamedll_vtable.h`
+were read from `tfc.dll`'s machine code. `tools/symbols/` automates that: it
+names ~80% of `tfc.dll`'s functions by porting them from `tfc.so`'s debug
+symbols (exports, vtable alignment, then string/constant fingerprinting) and
+writes a Ghidra labelling script and a per-class **vtable cross-map**
+(`tools/symbols/out/VTABLES.md`) — the table you read off to find a slot to
+hook. Re-run `tools/symbols/run.sh` after a TFC update to re-check every slot.
 
 ## Source
 
@@ -178,10 +222,13 @@ uses each field.
 | `tfx_hooks.cpp` | The metamod hooks, which hand on to the fixes |
 | `tfx_game.cpp` | Finding TFC's think functions by name |
 | `tfx_takehealth.cpp` | The player `TakeHealth` hook (#7) |
+| `tfx_conc.cpp` | The player `TakeConcussionBlast` hook (`conc_edge`) |
 | `tfx_offsets.h` | Field offsets, Windows and Linux, and where each was confirmed |
 | `tfx_config.cpp` | `tfc_fixes.ini`, `tfx`, `tfx_reload`, the counters |
 | `tfx_trace.cpp` | `fixes_trace.log` |
 | `gamedll_vtable.h` | Patching and restoring a vtable slot |
+| `tests/ci.sh` | One-command gate: build + coverage check + run all |
+| `tools/symbols/` | Name `tfc.dll` from `tfc.so` (vtable slots, offsets) |
 
 Credit to hlstriker, se7en, teh ORiON and azul for finding and documenting
 these bugs in the AMX plugin.

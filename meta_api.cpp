@@ -76,6 +76,7 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Detach(PLUG_LOADTIME /*now*/,
 	// The vtable slot goes back to the game's own function: nothing may go on
 	// calling into a DLL that is about to be gone.
 	TFX_UnhookTakeHealth();
+	TFX_UnhookConc();
 	TFX_Trace("==== Meta_Detach ====");
 	return TRUE;
 }

@@ -124,6 +124,7 @@
     <ClCompile Include="tfx_game.cpp" />
     <ClCompile Include="tfx_hooks.cpp" />
     <ClCompile Include="tfx_takehealth.cpp" />
+    <ClCompile Include="tfx_conc.cpp" />
     <ClCompile Include="tfx_trace.cpp" />
   </ItemGroup>
 

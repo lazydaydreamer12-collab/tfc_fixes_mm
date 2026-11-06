@@ -35,6 +35,7 @@ enum TfxFix
 	FIX_FLAG_TOSS,           // #18 "Not enough room to drop items here"
 	FIX_STUCK_MENUS,         // #19 a menu from last map stays on screen
 	FIX_PUSH_FPS,            // new: jump-pad (push field) launch height moves with fps/tick
+	FIX_CONC_EDGE,           // new: a conc that barely lifts you off the ground gets re-grounded and does nothing
 	FIX_COUNT
 };
 
@@ -52,6 +53,7 @@ struct TfxConfig
 	float pushScale;         // push_fps: multiply a jump pad's launch (push_scale, default 1)
 	float pushFanScale;      // push_fps: multiply a fan/updraft's sustained lift (push_fan_scale, default 1)
 	float pushMax;           // push_fps: clamp a launch/lift to this many u/s (push_max, 0 = no cap)
+	float concRescueMin;     // conc_edge: only rescue a conc whose upward kick is at least this (u/s); below it, leave the player grounded
 };
 extern TfxConfig g_tfx;
 
@@ -85,6 +87,10 @@ bool TFX_ThinkKnown(int which);
 // tfx_takehealth.cpp - the player's TakeHealth (fix #7)
 void TFX_HookTakeHealth(edict_t *pPlayer);
 void TFX_UnhookTakeHealth(void);
+
+// tfx_conc.cpp - the player's TakeConcussionBlast (fix: conc_edge)
+void TFX_HookConc(edict_t *pPlayer);
+void TFX_UnhookConc(void);
 
 // tfx_fixes.cpp - the fixes, called from the hooks in tfx_hooks.cpp
 void TFX_FixesMapStart(void);

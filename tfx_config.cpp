@@ -31,6 +31,7 @@ const TfxFixInfo g_tfxFixInfo[FIX_COUNT] =
 	{ "flag_toss",           "#18 Items can be dropped with something in front" },
 	{ "stuck_menus",         "#19 Menus from last map are closed" },
 	{ "push_fps",            "    Push pads launch the same at any fps/tick" },
+	{ "conc_edge",           "    Edge concs that barely lift you still launch (off by default)" },
 };
 
 TfxConfig g_tfx;
@@ -41,10 +42,14 @@ void TFX_ConfigDefaults(void)
 {
 	for (int i = 0; i < FIX_COUNT; i++)
 		g_tfx.on[i] = 1;
+	// conc_edge changes a long-standing movement feel (edge concs that used to
+	// do nothing now launch you), so it ships off - enable it deliberately.
+	g_tfx.on[FIX_CONC_EDGE] = 0;
 	g_tfx.logEach = 5;
 	g_tfx.pushScale = 1.0f;     // push_fps: jump pads unscaled by default
 	g_tfx.pushFanScale = 1.0f;  // push_fps: fans at full map strength by default
 	g_tfx.pushMax = 0.0f;       // push_fps: no launch/lift cap by default
+	g_tfx.concRescueMin = 150.0f; // conc_edge: only rescue concs that kick at least this much up
 }
 
 void TFX_Hit(int fix, const char *fmt, ...)
@@ -122,6 +127,16 @@ void TFX_ConfigLoad(void)
 			g_tfx.pushMax = m > 0.0f ? m : 0.0f;
 			continue;
 		}
+		if (!strcasecmp(key, "conc_rescue_min"))
+		{
+			float m = (float)atof(rest);
+			// Clamp to (0, 180]: 0 or less would rescue everything, over 180 is
+			// already airborne so there'd be nothing in the band to rescue.
+			if (m < 1.0f)   m = 1.0f;
+			if (m > 180.0f) m = 180.0f;
+			g_tfx.concRescueMin = m;
+			continue;
+		}
 		int fix = TFX_FixByKey(key);
 		if (fix < 0)
 		{
@@ -155,6 +170,19 @@ static void TFX_Cmd_Status(void)
 			tbuf[sizeof(tbuf) - 1] = 0;
 			SERVER_PRINT(tbuf);
 			TFX_Trace("Command: %s set to %.2f", key, v);
+			return;
+		}
+		if (!strcasecmp(key, "conc_rescue_min"))
+		{
+			float v = (float)atof(CMD_ARGV(2));
+			if (v < 1.0f)   v = 1.0f;
+			if (v > 180.0f) v = 180.0f;
+			g_tfx.concRescueMin = v;
+			char tbuf[160];
+			_snprintf_wc(tbuf, sizeof(tbuf) - 1, "[TFC Fixes] conc_rescue_min is now %.0f u/s (until the next map or tfx_reload).\n", v);
+			tbuf[sizeof(tbuf) - 1] = 0;
+			SERVER_PRINT(tbuf);
+			TFX_Trace("Command: conc_rescue_min set to %.0f", v);
 			return;
 		}
 		int fix = TFX_FixByKey(key);
@@ -194,6 +222,13 @@ static void TFX_Cmd_Status(void)
 		cap[sizeof(cap) - 1] = 0;
 		_snprintf_wc(buf, sizeof(buf) - 1, "  push_fps: pad launch x%.2f, fan lift x%.2f, cap %s   (set live: tfx push_scale|push_fan_scale|push_max <v>)\n",
 			g_tfx.pushScale, g_tfx.pushFanScale, cap);
+		buf[sizeof(buf) - 1] = 0;
+		SERVER_PRINT(buf);
+	}
+	if (TFX_On(FIX_CONC_EDGE))
+	{
+		_snprintf_wc(buf, sizeof(buf) - 1, "  conc_edge: rescue concs kicking %.0f..180 u/s up   (set live: tfx conc_rescue_min <v>)\n",
+			g_tfx.concRescueMin);
 		buf[sizeof(buf) - 1] = 0;
 		SERVER_PRINT(buf);
 	}
