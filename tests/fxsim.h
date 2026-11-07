@@ -44,3 +44,8 @@ template <typename T> T &F(edict_t *e, int ofs) { return *(T *)((char *)e->pvPri
 
 int Check(bool ok, const char *what);
 extern int g_fail, g_pass;
+
+// Count of times a trace met a SOLID_TRIGGER still in the engine's solid clip
+// list during the current scenario - the engine's fatal "Trigger in clipping
+// list". Reset by SimInit. A fix must keep this 0.
+extern int g_trigInClipList;

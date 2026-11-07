@@ -303,7 +303,11 @@ static void S_Mirv(bool on)
 			if (ED[i].v.origin.z > 90) above++;
 			printf("  bomblet at z=%.1f\n", ED[i].v.origin.z);
 		}
-	if (on) Check(n == 4 && above == 0, "#13: all 4 bomblets stay below the floor above the MIRV");
+	if (on)
+	{
+		Check(n == 4 && above == 0, "#13: all 4 bomblets stay below the floor above the MIRV");
+		Check(g_trigInClipList == 0, "#13: no 'Trigger in clipping list' fatal while placing bomblets");
+	}
 	else Check(above > 0, "(control) without the plugin bomblets appear on the other side");
 }
 

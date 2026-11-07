@@ -181,6 +181,15 @@ it (its own `SET_ORIGIN`, guarded against re-entry).
 trace, through a thin floor/ceiling. **Fix:** `TFX_SetOriginPre` finds the MIRV below
 the requested spot, traces from it, and keeps the bomblet on the MIRV's side.
 
+`LaunchFromMirv` sets the bomblet's `solid` to `SOLID_TRIGGER` a few instructions
+*before* it relinks it, so when our `SetOrigin` hook runs the bomblet is a trigger
+still listed in the engine's **solid** clipping list. Tracing then makes the engine
+walk that list, meet a trigger, and `Sys_Error("Trigger in clipping list")` — a hard
+server crash on every MIRV detonation. So before tracing, the fix relinks the bomblet
+to its own origin (guarded) to move it into the list its current `solid` belongs in;
+the trace is then safe. The `mirv` test scenario models the engine's clipping-list
+rule and asserts the fatal never fires.
+
 ### #14 `grenade_spawn` — a primed grenade follows you to spawn
 A primed grenade first checks its owner 0.8 s after the pin is pulled; die and
 respawn inside that window and it is still "in hand" and goes off at your new spawn.

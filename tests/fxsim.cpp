@@ -26,6 +26,12 @@ int g_lastSetViewTo[64];
 std::vector<std::string> g_msgLog, g_printLog;
 int g_quiet = 1;
 int g_fail = 0, g_pass = 0;
+int g_trigInClipList = 0;
+// Which edicts the engine would have in its SOLID clip list: set at link time
+// (SetOrigin/SetSize -> Relink) from the solid value THEN. A later pev->solid
+// change without a relink leaves this stale - exactly how a trigger ends up in
+// the solid list.
+static signed char g_linkSolidList[MAXE];
 
 // tfc.so (with its debug symbols - nm reads a few non-exported globals) and
 // the plugin under test: $TFC_SO and $TFX_PLUGIN, or ./tfc.so and the plugin
@@ -70,7 +76,7 @@ static std::map<std::string, int> s_models;
 static int eModelIndex(const char *m) { auto it = s_models.find(m); if (it != s_models.end()) return it->second; int n = (int)s_models.size() + 1; s_models[m] = n; return n; }
 static void eSetModel(edict_t *e, const char *m) { e->v.model = MK(m); e->v.modelindex = eModelIndex(m); }
 static int eModelFrames(int) { return 1; }
-static void Relink(edict_t *e) { e->v.absmin = e->v.origin + e->v.mins - Vector(1, 1, 1); e->v.absmax = e->v.origin + e->v.maxs + Vector(1, 1, 1); }
+static void Relink(edict_t *e) { e->v.absmin = e->v.origin + e->v.mins - Vector(1, 1, 1); e->v.absmax = e->v.origin + e->v.maxs + Vector(1, 1, 1); int i = IdxOf(e); if (i >= 0 && i < MAXE) g_linkSolidList[i] = (e->v.solid != SOLID_NOT && e->v.solid != SOLID_TRIGGER) ? 1 : 0; }
 static void eSetSize(edict_t *e, const float *mn, const float *mx) { e->v.mins = Vector(mn); e->v.maxs = Vector(mx); e->v.size = e->v.maxs - e->v.mins; Relink(e); }
 static void eSetOrigin(edict_t *e, const float *o) { e->v.origin = Vector(o); Relink(e); }
 static float eVecToYaw(const float *v) { if (v[0] == 0 && v[1] == 0) return 0; float y = atan2f(v[1], v[0]) * 180 / M_PI; if (y < 0) y += 360; return y; }
@@ -207,6 +213,24 @@ static void SweepTrace(const Vector &a, const Vector &b, const Vector &hmn, cons
 	// else it hits, or 1). Starting inside the WORLD is allsolid, fraction 0.
 	memset(tr, 0, sizeof(*tr));
 	tr->flFraction = 1; tr->vecEndPos = b; tr->fInOpen = 1;
+	// Engine faithfulness: SV_ClipToLinks walks the SOLID clip list for every
+	// node this move crosses; if it meets an edict still listed there whose live
+	// solid is SOLID_TRIGGER, the engine calls Sys_Error("Trigger in clipping
+	// list") and the server dies. Membership is fixed at link time, so a
+	// pev->solid change without a relink leaves a trigger stale in the solid
+	// list. Record it here (passedict is exempt, as in the engine).
+	for (int i = 1; i < MAXE; i++)
+	{
+		edict_t *e = &ED[i];
+		if (e->free || e == skip || !g_linkSolidList[i] || e->v.solid != SOLID_TRIGGER) continue;
+		Vector n; float f = SegBox(a, b, e->v.absmin - hmx, e->v.absmax - hmn, n);
+		if (f <= 1.0f)
+		{
+			g_trigInClipList++;
+			printf("  [engine] FATAL: Trigger in clipping list (edict %d '%s')\n",
+				i, e->v.classname ? (G.pStringBase + e->v.classname) : "?");
+		}
+	}
 	float best = 1; Vector bestN(0, 0, 0); edict_t *hit = NULL, *startIn = NULL; bool worldStart = false;
 	for (auto &w : g_world)
 	{
@@ -447,6 +471,8 @@ void *SimSym(const char *name)
 void SimInit(bool withPlugin)
 {
 	g_pluginOn = withPlugin;
+	g_trigInClipList = 0;
+	memset(g_linkSolidList, 0, sizeof(g_linkSolidList));
 	memset(ED, 0, sizeof(ED));
 	for (int i = 0; i < MAXE; i++) { ED[i].free = 1; ED[i].v.pContainingEntity = &ED[i]; }
 	memset(&G, 0, sizeof(G));

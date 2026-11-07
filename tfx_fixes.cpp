@@ -670,6 +670,17 @@ static bool TFX_BombletPlace(edict_t *b, const float *org)
 	}
 	if (!mirv)
 		return false;
+	// The bomblet reaches us mid-launch: CTFBomblet::LaunchFromMirv has already
+	// set pev->solid = SOLID_TRIGGER but has not relinked it yet, so the engine
+	// still lists it in the *solid* clipping list. The TRACE_LINE below would
+	// make the engine walk that list, meet a trigger in it, and abort the whole
+	// server ("FATAL ERROR (shutting down): Trigger in clipping list"). Relink it
+	// first - a SetOrigin to its own origin - so its clip-list membership matches
+	// its current solid; then the trace is safe. Stock TFC never trips this
+	// because nothing traces between the solid change and its own relink.
+	s_guard = true;
+	SET_ORIGIN(b, b->v.origin);
+	s_guard = false;
 	Vector from = mirv->v.origin, to(org[0], org[1], org[2]);
 	TraceResult tr;
 	TRACE_LINE(from, to, ignore_monsters, mirv, &tr);

@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.2.0
+
+- **Fix #13 `mirv_walls` no longer crashes the server ("Trigger in clipping
+  list").** On the current (anniversary) build `CTFBomblet::LaunchFromMirv`
+  sets a bomblet's `solid` to `SOLID_TRIGGER` and only relinks it a few
+  instructions later; in that gap the bomblet is a trigger still listed in the
+  engine's *solid* clipping list. `mirv_walls` traces from the MIRV to each
+  bomblet to keep it on the MIRV's side of a thin ceiling/floor, and that trace
+  was landing inside the gap - so the engine walked the solid list, met a
+  trigger in it, and aborted the whole server (`FATAL ERROR (shutting down):
+  Trigger in clipping list`) on essentially every MIRV detonation (a demoman
+  MIRV jump being the easy way to hit it). The fix relinks the bomblet to match
+  its current `solid` before tracing, so the trace can never meet a trigger in
+  the solid list; the bomblet still ends up exactly where `mirv_walls` puts it.
+  Stock TFC never tripped this because nothing of its own traces in that gap.
+  The test harness now models the engine's clipping-list rule and the `mirv`
+  scenario asserts the fatal never fires - it fails without the fix and passes
+  with it.
+- **New fix `conc_edge` (off by default): edge concussion grenades that barely
+  lift you still launch.** A concussion grenade sets your velocity directly, but
+  the engine only keeps you airborne when the upward part clears 180 u/s; at or
+  below that, `PM_CatagorizePosition` traces 2 units down, finds the floor and
+  drops you straight back onto it (`PM_WalkMove` then zeroes your vertical
+  velocity). So a close conc that kicks you up by, say, 160 u/s is erased before
+  you move an inch — which is why close concs feel inconsistent: some launch you,
+  some do nothing. With `conc_edge` on, a conc that leaves a *grounded* player in
+  the `conc_rescue_min`..180 band is nudged just over 180 (and `FL_ONGROUND`
+  cleared) so it launches; a strong conc (already over 180), a weak one (below
+  `conc_rescue_min`, default 150) and an already-airborne player are all left
+  exactly as the game set them. It ships **off** because it changes a
+  long-standing movement feel — enable it deliberately. It hooks
+  `TeamFortress_TakeConcussionBlast` on the shared player vtable (the same
+  one-patch-covers-every-player mechanism as #7's `TakeHealth`); the slot was
+  read out of each shipped game DLL — `tfc.so` slot 63, `tfc.dll` slot 62 — so
+  the fix runs on Windows and Linux servers. Tune the band from the ini
+  (`conc_rescue_min`) or live with `tfx conc_rescue_min <v>`.
+- **`tools/symbols/`: a tool to read the game DLLs.** A cross-symbolizer that
+  names ~80% of `tfc.dll`'s functions by porting `tfc.so`'s debug symbols onto
+  it — exact matches on `tfc.dll`'s exported names and on each class vtable, then
+  string/constant/call-graph fingerprinting for the rest. It writes a Ghidra
+  labelling script, a symbol map, and a per-class **vtable cross-map**
+  (`out/VTABLES.md`), which is the table the plugin's Windows vtable slots and
+  field offsets are read off. Re-run `tools/symbols/run.sh` after a TFC update to
+  re-check every slot and offset against the new binaries.
+- **`tests/ci.sh`: a one-command release gate.** It builds the plugin `.so` and
+  the test harness, checks that *every* fix has at least one scenario
+  (`t_fixes --coverage`), and runs every scenario with the plugin on and off,
+  with a clean per-scenario report and a pass/fail exit code. Adding a fix
+  without a test now fails the gate.
+
 ## 1.1.0
 
 - **New fix `push_fps`: push pads launch the same at any fps/tick.** A
